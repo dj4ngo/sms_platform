@@ -30,25 +30,27 @@
 #define numberOfHours(_time_) (( _time_% SECS_PER_DAY) / SECS_PER_HOUR)
 #define elapsedDays(_time_) ( _time_ / SECS_PER_DAY)  
 
-
+/* checks intervals */
 #define checkalive_interval (600UL)
 #define dht22_interval (600UL)
-#define PHONEBOOK_SIZE 10
 
+/* phone book */
+#define PHONEBOOK_SIZE 10
 // just used at first time to add the first admin
 #define INIT_PHONEBOOK false
 #define INIT_NAME "XXXX"
 #define INIT_NUMBER "06XXXXXXXX"
 
-// timers
+/* timers */
 unsigned long checkalive_last = 0;
 unsigned long last_ok_received = 0;
 unsigned long dht22_last = 0;
 
+
+/* temperature / humidity */
 SoftwareSerial sim800(10, 11);
 DHT dht_int(PIN_DHT_INT, DHT_TYPE); 
 DHT dht_ext(PIN_DHT_EXT, DHT_TYPE); 
-
 
 float hum_int, temp_int, hum_ext, temp_ext;
 float temp_int_min, temp_int_max, temp_ext_min, temp_ext_max;
@@ -57,25 +59,26 @@ bool temp_int_max_reached = false;
 bool temp_ext_min_reached = false;
 bool temp_ext_max_reached = false;
 
-// String buffer for the GPRS shield message
+/* String buffer for the GPRS shield message */
 String msg = String("");
 String from = String("");
 String sms_position = String("");
 
-// Set to 1 when the next GPRS shield message will contains the SMS message
-bool SmsContentFlag = 0;
-
-
-// thresholds
+/* thresholds */
 short temp_int_high, temp_int_low, temp_ext_high, temp_ext_low;
 
+
+/* Set to 1 when the next GPRS shield message will contains the SMS message */
+bool SmsContentFlag = 0;
+
+/* EEPROM addresses */
 int temp_int_low_address = 0;
 int temp_int_high_address = temp_int_low_address + sizeof(temp_int_low);
 int temp_ext_low_address = temp_int_high_address + sizeof(temp_int_high);
 int temp_ext_high_address = temp_ext_low_address + sizeof(temp_ext_low);
 int phonebook_address = temp_ext_high_address + sizeof(temp_ext_high);
 
-// Phonebook
+/* Phonebook */
 struct Contact {
   char number[11] = "";
   char name[11] = "";
@@ -84,7 +87,7 @@ struct Contact {
 static const struct Contact EmptyContact;
 struct Contact phonebook[PHONEBOOK_SIZE];
 
-
+/*---------------SETUP--------------*/
 void setup()
 {
   
@@ -147,6 +150,7 @@ void setup()
 
 }
 
+/*---------------LOOP--------------*/
 void loop()
 {
     while (Serial.available())
@@ -200,7 +204,7 @@ void loop()
       if ( temp_int_min_reached &&  temp_int > temp_int_min +5){
         temp_int_min_reached = false;
       }
-      if ( !temp_int_min_reached && temp_int < temp_int_min) {
+      if ( !temp_int_min_reached && temp_int <= temp_int_min) {
         temp_int_min_reached = true;
         send_sms_to_admins(String("") + F("Alerte temp int min : ") + temp_int);
       }
@@ -208,7 +212,7 @@ void loop()
       if ( temp_int_max_reached &&  temp_int < temp_int_max -5){
         temp_int_max_reached = false;
       }
-      if ( !temp_int_max_reached && temp_int > temp_int_max) {
+      if ( !temp_int_max_reached && temp_int >= temp_int_max) {
         temp_int_max_reached = true;
         send_sms_to_admins(String("") + F("Alerte temp int max : ") + temp_int);
       }
@@ -253,6 +257,9 @@ void loop()
     }
 }
 
+/*---------------PROCESSING FUNCTIONS--------------*/
+
+// Process SMS
 void ProcessSms( String sms, String from_num ){
   sms.toLowerCase();
   sms.trim();
@@ -486,11 +493,13 @@ void ProcessSms( String sms, String from_num ){
         if (minmax.equals(F("min"))){
           
           temp_int_low = (short)value.toInt();
+          temp_int_min_reached = false;
           EEPROM.put(temp_int_low_address, temp_int_low);
           
         }else if (minmax.equals(F("max"))){
           
           temp_int_high = (short)value.toInt();
+          temp_int_max_reached = false;
           EEPROM.put(temp_int_high_address, temp_int_high);
                     
         }else{
@@ -509,11 +518,13 @@ void ProcessSms( String sms, String from_num ){
         if (minmax.equals(F("min"))){
           
           temp_ext_low = (short)value.toInt();
+          temp_ext_min_reached = false;
           EEPROM.put(temp_ext_low_address, temp_ext_low);
           
         }else if (minmax.equals(F("max"))){
             
           temp_ext_high = (short)value.toInt();
+          temp_ext_max_reached = false;
           EEPROM.put(temp_ext_high_address, temp_ext_high);
                     
         }else{
@@ -575,6 +586,127 @@ void ProcessSms( String sms, String from_num ){
   return;
 }
 
+
+// interpret the GPRS shield message and act appropiately
+void ProcessGprsMsg() {
+  // Remove trailer char
+  msg.remove(0,1);
+
+    
+  Serial.print(F("\nGPRS Message: ["));
+  Serial.print(msg);
+  Serial.println(F("]"));
+
+  // Reset checkalive on OK message
+  if (msg.equals(F("OK"))){
+    Serial.println(F("OK catched !"));
+    last_ok_received = (unsigned long)millis();
+  }
+
+  // Process Call ready to start SMS text mode
+  else if( msg.equals(F("SMS Ready"))){
+    Serial.println(F("GPRS Shield registered on Mobile Network"));
+    sim800.println(F("AT+CMGF=1"));
+  }
+  // Process normal power down to restart the shied
+  else if (msg.equals(F("NORMAL POWER DOWN"))){ 
+    Serial.println(F("Normal powerdown received; restart sim800"));
+    restart_sim800('r');
+  }
+
+  // SMS message
+  else if( msg.startsWith(F("+CMTI"))){
+    Serial.println(F("*** SMS Received ***"));
+    // Look for the coma in the full message (+CMTI: "SM",6)
+    // In the sample, the SMS is stored at position 6
+
+    // Ask to read the SMS store
+    sms_position = msg.substring(msg.indexOf(',') + 1);
+    sim800.print(F("AT+CMGR="));
+    sim800.println( sms_position );
+    
+  }
+
+  // SMS store readed through UART (result of GMGR request)  
+  else if( msg.indexOf(F("+CMGR:")) >= 0 ){
+    // Example of message : +CMGR: "REC UNREAD","+33606060606","Name","20/11/29,14:59:33+04"
+    
+    // get from telephone number
+    int pos = msg.indexOf(',')+2;
+    msg.remove(0,pos);
+    from = msg.substring(0,msg.indexOf('"'));
+    // remove third first char and add a 0 to change from international (+33 or 0033)
+    // to national number to compare it with phonebook
+    if (from.startsWith(F("+"))) {
+      from = '0' + from.substring(3);
+    } else if (from.startsWith(F("00"))) {
+      from = '0' + from.substring(4);
+    }
+    
+    // Next message will contains the BODY of SMS
+    SmsContentFlag = 1;
+    // Following lines are essentiel to not clear the flag!
+    msg="";
+    return;
+  }
+/* Read SIM phonebook entries on a CPBF search command
+ *  
+ 
+  else if (msg.startsWith(F("+CPBF:")) >= 0){
+    
+    // example of string received : +CPBF: 10,"0606060606",129,"Name"
+    int next;
+    String id, num, name;
+    next = msg.indexOf(',');
+    id = msg.substring(8,next);
+    
+    // look fun num, +2 to consume the "
+    msg.remove(0,next+2);
+    next = msg.indexOf('"');
+    num = msg.substring(0,next);
+    
+    // Next val is phone type (national = 129 international = 145
+    // Always coded on 3 digits
+    // jump of 7 to start the name
+    msg.remove(0, next + 7);
+    next = msg.indexOf('"');
+    name = msg.substring(0,next);
+    
+    Serial.println("*** CPBF *** id=[" + String(id) +"] num=[" + String(num) + "] name=[" + String(name) + "]");
+   
+  }
+*/
+
+  // +CMGR message just before indicate that the following GRPS Shield message 
+  // (this message) will contains the SMS body
+  if( SmsContentFlag == 1 ){
+    Serial.println(F("*** SMS MESSAGE CONTENT ***"));
+    Serial.println( msg );
+    Serial.println(F("*** END OF SMS MESSAGE ***"));
+    // Process SMS only coming from registered contacts
+    if (is_registered(from)) {
+      ProcessSms( msg, from );
+    } else {
+      Serial.print(F("Contact not registered :"));
+      Serial.println(from);
+    }
+    //Serial.print(F("Remove SMS a position "));
+    //Serial.println(sms_pos);
+
+    sim800.print(F("AT+CMGD="));
+    sim800.println(sms_position);
+    
+    
+  }
+
+  // Always clear Gprs message
+  msg="";
+  // Always clear the flag
+  SmsContentFlag = 0; 
+}
+
+
+/*---------------PHONEBOOK FUNCTIONS--------------*/
 
 bool is_registered (String num) {
   return get_contact_id(num) >= 0;
@@ -740,169 +872,8 @@ void add_contact(String name, String num,  bool admin, String from_num) {
 
 }
 
+/*---------------TOOLS FUNCTIONS--------------*/
 
-
-// interpret the GPRS shield message and act appropiately
-void ProcessGprsMsg() {
-  // Remove trailer char
-  msg.remove(0,1);
-
-    
-  Serial.print(F("\nGPRS Message: ["));
-  Serial.print(msg);
-  Serial.println(F("]"));
-
-  // Reset checkalive on OK message
-  if (msg.equals(F("OK"))){
-    Serial.println(F("OK catched !"));
-    last_ok_received = (unsigned long)millis();
-  }
-
-  // Process Call ready to start SMS text mode
-  else if( msg.equals(F("SMS Ready"))){
-    Serial.println(F("GPRS Shield registered on Mobile Network"));
-    sim800.println(F("AT+CMGF=1"));
-  }
-  // Process normal power down to restart the shied
-  else if (msg.equals(F("NORMAL POWER DOWN"))){ 
-    Serial.println(F("Normal powerdown received; restart sim800"));
-    restart_sim800('r');
-  }
-
-  // SMS message
-  else if( msg.startsWith(F("+CMTI"))){
-    Serial.println(F("*** SMS Received ***"));
-    // Look for the coma in the full message (+CMTI: "SM",6)
-    // In the sample, the SMS is stored at position 6
-
-    // Ask to read the SMS store
-    sms_position = msg.substring(msg.indexOf(',') + 1);
-    sim800.print(F("AT+CMGR="));
-    sim800.println( sms_position );
-    
-  }
-
-  // SMS store readed through UART (result of GMGR request)  
-  else if( msg.indexOf(F("+CMGR:")) >= 0 ){
-    // Example of message : +CMGR: "REC UNREAD","+33606060606","Name","20/11/29,14:59:33+04"
-    
-    // get from telephone number
-    int pos = msg.indexOf(',')+2;
-    msg.remove(0,pos);
-    from = msg.substring(0,msg.indexOf('"'));
-    // remove third first char and add a 0 to change from international (+33 or 0033)
-    // to national number to compare it with phonebook
-    if (from.startsWith(F("+"))) {
-      from = '0' + from.substring(3);
-    } else if (from.startsWith(F("00"))) {
-      from = '0' + from.substring(4);
-    }
-    
-    // Next message will contains the BODY of SMS
-    SmsContentFlag = 1;
-    // Following lines are essentiel to not clear the flag!
-    msg="";
-    return;
-  }
-/* Read SIM phonebook entries on a CPBF search command
- *  
- 
-  else if (msg.startsWith(F("+CPBF:")) >= 0){
-    
-    // example of string received : +CPBF: 10,"0606060606",129,"Name"
-    int next;
-    String id, num, name;
-    next = msg.indexOf(',');
-    id = msg.substring(8,next);
-    
-    // look fun num, +2 to consume the "
-    msg.remove(0,next+2);
-    next = msg.indexOf('"');
-    num = msg.substring(0,next);
-    
-    // Next val is phone type (national = 129 international = 145
-    // Always coded on 3 digits
-    // jump of 7 to start the name
-    msg.remove(0, next + 7);
-    next = msg.indexOf('"');
-    name = msg.substring(0,next);
-    
-    Serial.println("*** CPBF *** id=[" + String(id) +"] num=[" + String(num) + "] name=[" + String(name) + "]");
-   
-  }
-*/
-
-  // +CMGR message just before indicate that the following GRPS Shield message 
-  // (this message) will contains the SMS body
-  if( SmsContentFlag == 1 ){
-    Serial.println(F("*** SMS MESSAGE CONTENT ***"));
-    Serial.println( msg );
-    Serial.println(F("*** END OF SMS MESSAGE ***"));
-    // Process SMS only coming from registered contacts
-    if (is_registered(from)) {
-      ProcessSms( msg, from );
-    } else {
-      Serial.print(F("Contact not registered :"));
-      Serial.println(from);
-    }
-    //Serial.print(F("Remove SMS a position "));
-    //Serial.println(sms_pos);
-
-    sim800.print(F("AT+CMGD="));
-    sim800.println(sms_position);
-    
-    
-  }
-
-  // Always clear Gprs message
-  msg="";
-  // Always clear the flag
-  SmsContentFlag = 0; 
-}
-
-
-String uptime() {
-  unsigned long m = millis() / 1000;
-  String ret;
-
-  String hours = String(numberOfHours(m), DEC);
-  if ( numberOfHours(m) < 10)
-    hours = "0" + hours;
-
-  String minutes = String(numberOfMinutes(m), DEC);
-  if ( numberOfMinutes(m) < 10)
-    minutes = "0" + minutes;
-
-  String seconds = String(numberOfSeconds(m), DEC);
-  if ( numberOfSeconds(m) < 10)
-    seconds = "0" + seconds;
-
-  ret = String(elapsedDays(m),DEC);
-  ret += F(" jours ");
-  ret += hours + ':' + minutes + ':' + seconds;
-
-
-  return(ret);
-   
-}
-
-void flush_sim800() {
-  while (sim800.available()) {
-     Serial.write(sim800.read());
-  }
-}
-
-void wait_answer() {
-  unsigned long start_time = millis();
-  int timeout = 5000;
-  String  ret;
-   
-  // wait available
-  while ( ret.indexOf(F("OK")) <= 0 && ret.indexOf(F("ERROR")) && (millis() - start_time) < timeout) {
-      ret = sim800.readString();
-      Serial.print(ret);
-  }
-}
 
 void send_sms (String content, String phone_number) {
 
@@ -956,9 +927,9 @@ void send_sms_status(String phone_number) {
   msg += F(" C\n");
 
   msg += F("T int alertes : ");
-  msg += String(temp_int_high);
-  msg += F(" | ");
   msg += String(temp_int_low);
+  msg += F(" | ");
+  msg += String(temp_int_high);
   msg += F("\n");
   
   msg += F("T int min/max : ");
@@ -976,9 +947,9 @@ void send_sms_status(String phone_number) {
   msg += F(" C\n");
 
   msg += F("T ext alertes : ");
-  msg += String(temp_ext_high);
-  msg += F("|");
   msg += String(temp_ext_low);
+  msg += F(" | ");
+  msg += String(temp_ext_high);
   msg += F("\n");
 
   msg += F("T ext min/max : ");
@@ -1023,7 +994,29 @@ void send_sms_usage(String phone_number) {
   send_sms(msg, phone_number);
 }
 
+/*---------------SIM800 FUNCTIONS--------------*/
 
+
+void flush_sim800() {
+  while (sim800.available()) {
+     Serial.write(sim800.read());
+  }
+}
+
+void wait_answer() {
+  unsigned long start_time = millis();
+  int timeout = 5000;
+  String  ret;
+   
+  // wait available
+  while ( ret.indexOf(F("OK")) <= 0 && ret.indexOf(F("ERROR")) && (millis() - start_time) < timeout) {
+      ret = sim800.readString();
+      Serial.print(ret);
+  }
+}
+
+
+//  Force a restart using RST PIN of SIM800
 void restart_sim800(char reason) {
   
   // Start Sim800
@@ -1082,4 +1075,32 @@ void restart_sim800(char reason) {
   }
   send_sms_to_admins ( sms_msg);
   
+}
+
+/*---------------TOOLS FUNCTIONS--------------*/
+
+
+String uptime() {
+  unsigned long m = millis() / 1000;
+  String ret;
+
+  String hours = String(numberOfHours(m), DEC);
+  if ( numberOfHours(m) < 10)
+    hours = "0" + hours;
+
+  String minutes = String(numberOfMinutes(m), DEC);
+  if ( numberOfMinutes(m) < 10)
+    minutes = "0" + minutes;
+
+  String seconds = String(numberOfSeconds(m), DEC);
+  if ( numberOfSeconds(m) < 10)
+    seconds = "0" + seconds;
+
+  ret = String(elapsedDays(m),DEC);
+  ret += F(" jours ");
+  ret += hours + ':' + minutes + ':' + seconds;
+
+
+  return(ret);
+   
 }
