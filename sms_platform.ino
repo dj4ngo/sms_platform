@@ -32,7 +32,7 @@
 
 /* checks intervals */
 #define checkalive_interval (600UL)
-#define dht22_interval (600UL)
+#define dht22_interval (60UL)
 
 /* phone book */
 #define PHONEBOOK_SIZE 10
@@ -204,7 +204,7 @@ void loop()
       if ( temp_int_min_reached &&  temp_int > temp_int_min +5){
         temp_int_min_reached = false;
       }
-      if ( !temp_int_min_reached && temp_int <= temp_int_min) {
+      if ( !temp_int_min_reached && temp_int < temp_int_min) {
         temp_int_min_reached = true;
         send_sms_to_admins(String("") + F("Alerte temp int min : ") + temp_int);
       }
@@ -212,7 +212,7 @@ void loop()
       if ( temp_int_max_reached &&  temp_int < temp_int_max -5){
         temp_int_max_reached = false;
       }
-      if ( !temp_int_max_reached && temp_int >= temp_int_max) {
+      if ( !temp_int_max_reached && temp_int > temp_int_max) {
         temp_int_max_reached = true;
         send_sms_to_admins(String("") + F("Alerte temp int max : ") + temp_int);
       }
@@ -260,7 +260,7 @@ void loop()
 /*---------------PROCESSING FUNCTIONS--------------*/
 
 // Process SMS
-void ProcessSms( String sms, String from_num ){
+void ProcessSms( String sms, String &from_num ){
   sms.toLowerCase();
   sms.trim();
 
@@ -320,17 +320,15 @@ void ProcessSms( String sms, String from_num ){
       Serial.print(F("] for command ["));
       Serial.println(command +"]" );
       */
+
+      String msg = F("Erreur : Argument inconnu : [");
+      msg += arguments.substring(0,arguments.indexOf(' '));
+      msg += F("] pour commande : [");
+      msg += command;
+      msg += F("]");
+      msg += F("\naide pour plus d'informations");
       
-      String unknown_arg_txt = F("Argument inconnu") ;
-      String for_command_txt = F("pour commande");
-      send_sms(unknown_arg_txt 
-               + F(" : [") 
-               + arguments.substring(0,arguments.indexOf(' '))
-               + F("] ")
-               + for_command_txt
-               + F(" : [") + command + F("]")
-               , from_num);
-      send_sms_usage(from_num);
+      send_sms(msg, from_num);
       return;
     }
   //-----------------------------------
@@ -348,8 +346,6 @@ void ProcessSms( String sms, String from_num ){
             );
 
       send_sms(F("Prise allumee"),from_num);
-      send_sms_status(from_num);
-      
       
     } else if ( arguments.substring(0,arguments.indexOf(' ')) == F("off") ) {
       digitalWrite( PIN_PLUG, HIGH );
@@ -361,7 +357,6 @@ void ProcessSms( String sms, String from_num ){
             + from_num
             );
       send_sms(F("Prise arretee"),from_num);
-      send_sms_status(from_num);
       
     } else {
       /*
@@ -370,17 +365,15 @@ void ProcessSms( String sms, String from_num ){
       Serial.print(F("] for command ["));
       Serial.println(command +"]" );
       */
+
+      String msg = F("Erreur: Argument inconnu : [");
+      msg += arguments.substring(0,arguments.indexOf(' '));
+      msg += F("] pour commande : [");
+      msg += command;
+      msg += F("]");
+      msg += F("\naide pour plus d'informations");
       
-      String unknown_arg_txt = F("Argument inconnu") ;
-      String for_command_txt = F("pour commande");
-      send_sms(unknown_arg_txt 
-               + F(" : [") 
-               + arguments.substring(0,arguments.indexOf(' '))
-               + F("] ")
-               + for_command_txt
-               + F(" : [") + command + F("]")
-               , from_num);
-      send_sms_usage(from_num);
+      send_sms(msg, from_num);
       return;
     }
   //-----------------------------------
@@ -406,24 +399,23 @@ void ProcessSms( String sms, String from_num ){
       // Add admin contact
       admin = true;
     } else {
-      String unknown_arg_txt = F("Argument inconnu") ;
-      String for_command_txt = F("pour commande");
-      send_sms(unknown_arg_txt 
-               + F(" : [") 
-               + sub_command
-               + F("] ")
-               + for_command_txt
-               + F(" : [")+ command + F("]")
-               , from_num);
-      send_sms_usage(from_num);
-
+      String msg = F("Erreur: Argument inconnu: [");
+      msg += sub_command;
+      msg += F("] pour commande: [");
+      msg += command;
+      msg += F("]");
+      msg += F("\naide pour plus d'informations");
+      
+      send_sms(msg, from_num);
       return;
     }
     // ensure srings have the right size
     if ( name.length() > 10 || num.length() != 10 ){
       String msg;
-      msg = F("Les noms ne doivent pas depasser 10 caracteres.");
+      msg = F("Erreur: Les noms ne doivent pas depasser 10 caracteres.");
       msg += F("\nLes numeros de telephone doivent contenir 10 chiffres");
+      msg += F("\naide pour plus d'informations");
+      
       send_sms(msg,from_num);
       return;
     }
@@ -445,18 +437,16 @@ void ProcessSms( String sms, String from_num ){
   } else if ( command.equals(F("liste"))){
     String msg;
     for (int i = 0; i < PHONEBOOK_SIZE; i++){
-      // only admins can list admin numbers
-      if (!phonebook[i].admin || is_admin(from_num)) { 
-        // check if entry has not been removed
-        if ( strlen(phonebook[i].number) > 0 ) {
-          msg += String(phonebook[i].name);
-          msg += F(":");
-          msg += String(phonebook[i].number);
-          if ( phonebook[i].admin){
-            msg += F("*");
-          }
-          msg += F("\n");
+      // check if entry has not been removed
+      if ( strlen(phonebook[i].number) > 0 ) {
+        msg += String(phonebook[i].name);
+        msg += F(":");
+        msg += String(phonebook[i].number);
+        // only admins can print admin status
+        if ( phonebook[i].admin && is_admin(from_num)){
+          msg += F("*");
         }
+        msg += F("\n");
       }
     }
     send_sms(msg,from_num);
@@ -504,7 +494,7 @@ void ProcessSms( String sms, String from_num ){
                     
         }else{
           send_sms( String("") 
-                    + F("ERREUR: valeur [")
+                    + F("Erreur: valeur [")
                     + minmax
                     + F("] inconnue pour commande [")
                     + command + ' ' + what + +' ' + where
@@ -529,7 +519,7 @@ void ProcessSms( String sms, String from_num ){
                     
         }else{
           send_sms( String("") 
-                    + F("ERREUR: valeur [")
+                    + F("Erreur: valeur [")
                     + minmax
                     + F("] inconnue pour commande [")
                     + command + ' ' + what + +' ' + where
@@ -542,7 +532,7 @@ void ProcessSms( String sms, String from_num ){
         
       } else {
         send_sms( String("") 
-                  + F("ERREUR: valeur [")
+                  + F("Erreur: valeur [")
                   + where
                   + F("] inconnue pour commande [")
                   + command + ' ' + what
@@ -566,6 +556,29 @@ void ProcessSms( String sms, String from_num ){
     send_sms(F("Valeur mise a jour"),from_num);
     return;  
   //-----------------------------------
+  } else if ( command.equals(F("reset")) ){
+    String val = arguments.substring(0,arguments.indexOf(' '));
+    val.trim();
+    if ( val.equals(F("minmax"))){
+      temp_int_min = temp_int;
+      temp_int_max = temp_int;
+      temp_ext_min = temp_ext;
+      temp_ext_max = temp_ext;
+      
+      send_sms(F("Valeurs min et max reinitialises pour toutes les temperatures."),from_num);
+      
+    } else {
+      send_sms( String("")
+                + F("Erreur: Valeur inconnue [")
+                + val
+                + F("] pour la commande [")
+                + command
+                + ']'
+                , from_num);
+                
+    }
+    return;  
+  //-----------------------------------
   } else if ( command.equals(F("ping")) ){
     send_sms(F("pong"),from_num);
     return;  
@@ -576,9 +589,12 @@ void ProcessSms( String sms, String from_num ){
   //-----------------------------------
   } else {
 
-    String unknown_command_txt = F("Commande inconnue: [");
-    send_sms( unknown_command_txt + command + ']', from_num);
-    send_sms_usage(from_num);
+    
+    String msg = F("Erreur : Commande inconnue: [");
+    msg += command;
+    msg += F("]");
+    msg += F("\naide pour plus d'informations");
+    send_sms(msg, from_num);
     
     return;
   }
@@ -708,16 +724,16 @@ void ProcessGprsMsg() {
 
 /*---------------PHONEBOOK FUNCTIONS--------------*/
 
-bool is_registered (String num) {
+bool is_registered (String &num) {
   return get_contact_id(num) >= 0;
 }
 
-bool is_admin(String num) {
+bool is_admin(String &num) {
   int i = get_contact_id(num);
   return phonebook[i].admin;
 }
 
-String get_contact_name(String num){
+String get_contact_name(String &num){
   // check if num is already registered
   for (int i=0; i < PHONEBOOK_SIZE; i++ ){
     if ( String(phonebook[i].number) == num ){
@@ -727,7 +743,7 @@ String get_contact_name(String num){
   return F("inconnu");
 }
 
-int get_contact_id(String num){
+int get_contact_id(String &num){
   // check if num is already registered
   for (int i=0; i < PHONEBOOK_SIZE; i++ ){
     if ( String(phonebook[i].number) == num ){
@@ -748,7 +764,7 @@ int nb_admins() {
   return nb;
 }
 
-void del_contact(String num, String from_num) {
+void del_contact(String &num, String &from_num) {
   if (is_registered(num)){
     int i = get_contact_id(num);
 
@@ -772,13 +788,13 @@ void del_contact(String num, String from_num) {
         send_sms(F("Contact supprime"), from_num);
         return;
       } else {
-        send_sms(F("Impossible de supprimer le seul admin."), from_num);
+        send_sms(F("Erreur: Impossible de supprimer le seul admin."), from_num);
         return;
       }
     }
     else {
       if (!is_admin(num)) {
-        send_sms_to_admins( String("" )
+        send_sms_to_admins( String("")
             + F("Contact ")
             + phonebook[i].name
             + ':'
@@ -794,17 +810,20 @@ void del_contact(String num, String from_num) {
 
         send_sms(F("Contact supprime"), from_num);
         return;
+      } else {
+        send_sms(F("Erreur: Erreur inconnue"), from_num);
+        return;
       }
     }
   }  
   String msg;
-  msg += F("Numero non enregistre : ");
+  msg += F("Erreur: Numero non enregistre : ");
   msg += num;
   send_sms(msg, from_num);
-  
+  return;
 }
 
-void add_contact(String name, String num,  bool admin, String from_num) {
+void add_contact(String name, String num,  bool admin, String &from_num) {
  
   int i=0;
   bool already_exists = false;
@@ -827,7 +846,7 @@ void add_contact(String name, String num,  bool admin, String from_num) {
       nb_contacts = String("") + F("\nNombre de contacts maximum : ") + PHONEBOOK_SIZE;
     }
     send_sms( String("") 
-              + F("Plus de place disponible.")
+              + F("Erreur :  Plus de place disponible.")
               + nb_contacts
               , from_num);
     return;
@@ -866,7 +885,7 @@ void add_contact(String name, String num,  bool admin, String from_num) {
               , from_num);
 
   } else {
-    send_sms(F("Erreur inconnue"), from_num);
+    send_sms(F("Erreur: Erreur inconnue"), from_num);
     return;
   }
 
@@ -883,7 +902,7 @@ void send_sms (String content, String phone_number) {
   
   flush_sim800();
   sim800.print(F("AT+CMGS=\""));
-  sim800.print(String(phone_number));
+  sim800.print(phone_number);
   sim800.println(F("\""));
   wait_answer();
   sim800.println(content + char(26) + "");
@@ -891,16 +910,16 @@ void send_sms (String content, String phone_number) {
   
 }
 
-void send_sms_to_admins(String content){
+void send_sms_to_admins(String &content){
   for (int i=0; i < PHONEBOOK_SIZE; i++ ){
     if ( phonebook[i].admin ){
-      send_sms(content, phonebook[i].number);
+      send_sms(content, String(phonebook[i].number));
     }
   }
  
 }
 
-void send_sms_status(String phone_number) {
+void send_sms_status(String &phone_number) {
 
   String heater, plug;
 
@@ -962,13 +981,13 @@ void send_sms_status(String phone_number) {
   msg += String(hum_ext);
   msg += F(" %\n");
 
-  msg += F("On depuis ");
+  msg += F("ON depuis ");
   msg += uptime();
 
   send_sms(msg, phone_number);
 }
 
-void send_sms_usage(String phone_number) {
+void send_sms_usage(String &phone_number) {
   String msg;
 
   msg += F("Aide : \n\n");
@@ -976,6 +995,7 @@ void send_sms_usage(String phone_number) {
   msg += F("chauffage <on|off>\n");
   msg += F("prise <on|off>\n");
   msg += F("changer temp <int|ext> <min|max> <valeur>\n");
+  msg += F("reset minmax\n");
   msg += F("ajouter contact <nom> <numero>\n");
 
   if ( is_admin(phone_number)) {
@@ -984,11 +1004,6 @@ void send_sms_usage(String phone_number) {
 
   msg += F("supprimer <numero>\n");
   msg += F("liste\n  liste les contacts\n");
-
-  if ( is_admin(phone_number)) {
-    msg += F("  '*' pour les admins\n");
-  }
-
 
 
   send_sms(msg, phone_number);
